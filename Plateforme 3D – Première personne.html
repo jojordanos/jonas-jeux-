@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plateforme 3D – Première personne</title>
+<style>
+:root{--bg:#0b1020;--fg:#fff}
+@media (prefers-color-scheme: dark){:root{--bg:#0b1020;--fg:#fff}}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;font-family:system-ui,sans-serif;color:var(--fg)}
+canvas{display:block;width:100%;height:100%}
+#ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);cursor:pointer;text-align:center;padding:20px;box-sizing:border-box}
+#ui div{max-width:420px;line-height:1.6}
+#ui h1{margin:0 0 8px;font-size:28px}
+#hud{position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#fff;opacity:.8;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="ui"><div><h1>Plateforme 3D</h1>Clique pour jouer<br><b>ZQSD / WASD</b> : se déplacer · <b>Espace</b> : sauter<br><b>Souris</b> : regarder (ou flèches) · <b>Maj</b> : courir<br>Ne tombe pas de la plateforme !</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87b6e8);
+scene.fog=new THREE.Fog(0x87b6e8,30,120);
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,300);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x445566,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,0.8);
+sun.position.set(10,20,5);scene.add(sun);
+
+// Plateforme
+const SIZE=20,H=1;
+const plat=new THREE.Mesh(new THREE.BoxGeometry(SIZE,H,SIZE),new THREE.MeshLambertMaterial({color:0x6b7a8f}));
+plat.position.y=-H/2;scene.add(plat);
+const grid=new THREE.GridHelper(SIZE,20,0xffffff,0xaab4c4);
+grid.position.y=0.01;scene.add(grid);
+const edge=new THREE.Mesh(new THREE.BoxGeometry(SIZE+0.4,0.2,SIZE+0.4),new THREE.MeshLambertMaterial({color:0xe8a33d}));
+edge.position.y=-0.1;scene.add(edge);
+
+// Bras première personne
+const arm=new THREE.Group();
+const skin=new THREE.MeshLambertMaterial({color:0xf0c8a0});
+const sleeve=new THREE.MeshLambertMaterial({color:0x2f6fdd});
+const forearm=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.12,0.5),skin);
+forearm.position.z=-0.1;
+const cuff=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,0.3),sleeve);
+cuff.position.z=0.2;
+const hand=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.1,0.18),skin);
+hand.position.z=-0.43;
+arm.add(forearm,cuff,hand);
+arm.position.set(0.3,-0.28,-0.5);
+arm.rotation.set(0.1,0.25,0);
+camera.add(arm);scene.add(camera);
+
+// Joueur
+const EYE=1.7,player={pos:new THREE.Vector3(0,EYE,0),vel:new THREE.Vector3(),ground:true};
+let yaw=0,pitch=0,bob=0;
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space')e.preventDefault()});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+const ui=document.getElementById('ui');
+ui.addEventListener('click',()=>{
+  ui.style.display='none';
+  try{renderer.domElement.requestPointerLock()}catch(e){}
+});
+document.addEventListener('pointerlockchange',()=>{
+  if(!document.pointerLockElement&&!locked())return;
+  if(!document.pointerLockElement)ui.style.display='flex';
+});
+const locked=()=>document.pointerLockElement===renderer.domElement;
+addEventListener('mousemove',e=>{
+  if(!locked())return;
+  yaw-=e.movementX*0.0022;
+  pitch=Math.max(-1.5,Math.min(1.5,pitch-e.movementY*0.0022));
+});
+
+function respawn(){player.pos.set(0,EYE+0.5,0);player.vel.set(0,0,0)}
+
+let last=performance.now();
+function loop(t){
+  const dt=Math.min((t-last)/1000,0.05);last=t;
+  // flèches pour regarder
+  if(keys.ArrowLeft)yaw+=1.9*dt;if(keys.ArrowRight)yaw-=1.9*dt;
+  if(keys.ArrowUp)pitch=Math.min(1.5,pitch+1.4*dt);if(keys.ArrowDown)pitch=Math.max(-1.5,pitch-1.4*dt);
+
+  let f=0,s=0;
+  if(keys.KeyW||keys.KeyZ)f++;if(keys.KeyS)f--;
+  if(keys.KeyD)s++;if(keys.KeyA||keys.KeyQ)s--;
+  const speed=(keys.ShiftLeft||keys.ShiftRight)?8:5;
+  const len=Math.hypot(f,s)||1;
+  const sin=Math.sin(yaw),cos=Math.cos(yaw);
+  const wx=(-sin*f+cos*s)/len*speed, wz=(-cos*f-sin*s)/len*speed;
+  player.vel.x+=(wx-player.vel.x)*Math.min(1,12*dt);
+  player.vel.z+=(wz-player.vel.z)*Math.min(1,12*dt);
+
+  player.vel.y-=22*dt;
+  if(keys.Space&&player.ground){player.vel.y=8;player.ground=false}
+  player.pos.addScaledVector(player.vel,dt);
+
+  // collision avec la plateforme
+  const half=SIZE/2, onPlat=Math.abs(player.pos.x)<half&&Math.abs(player.pos.z)<half;
+  if(onPlat&&player.pos.y<=EYE&&player.pos.y>EYE-1.2&&player.vel.y<=0){
+    player.pos.y=EYE;player.vel.y=0;player.ground=true;
+  }else if(!onPlat||player.pos.y>EYE){player.ground=false}
+  if(player.pos.y<-25)respawn();
+
+  // balancement de marche
+  const moving=player.ground&&Math.hypot(player.vel.x,player.vel.z)>0.5;
+  bob+=moving?dt*10:0;
+  const bobY=moving?Math.sin(bob)*0.04:0;
+  arm.position.y=-0.28+(moving?Math.sin(bob)*0.02:0);
+  arm.position.x=0.3+(moving?Math.cos(bob*0.5)*0.015:0);
+
+  camera.position.set(player.pos.x,player.pos.y+bobY,player.pos.z);
+  camera.rotation.set(pitch,yaw,0,'YXZ');
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
